@@ -114,7 +114,9 @@ type AuditEvent struct {
 }
 
 type IdempotencyRecord struct {
-	Command  string    `json:"command"`
-	Revision int64     `json:"revision"`
-	At       time.Time `json:"at"`
+	Command     string    `json:"command"`
+	Revision    int64     `json:"revision"`
+	At          time.Time `json:"at"`
+	RequestHash string    `json:"request_hash,omitempty"`
+	Actor       string    `json:"actor,omitempty"`
 }

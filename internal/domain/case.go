@@ -238,27 +238,44 @@ func (c *ClearanceCase) MarkReleased(cert ReleaseCertificate, reviewer string, n
 	return nil
 }
 
-func (c *ClearanceCase) RecordRequest(requestID, command string, now time.Time) error {
+func (c *ClearanceCase) RecordRequest(requestID, command, requestHash, actor string, now time.Time) error {
 	if strings.TrimSpace(requestID) == "" {
 		return NewValidation("request_id", "不能为空")
 	}
 	if c.ProcessedRequests == nil {
 		c.ProcessedRequests = map[string]IdempotencyRecord{}
 	}
-	if existing, ok := c.ProcessedRequests[requestID]; ok && existing.Command != command {
-		return ErrDuplicateRequest
+	if existing, ok := c.ProcessedRequests[requestID]; ok {
+		if existing.Command != command {
+			return ErrDuplicateRequest
+		}
+		if existing.RequestHash != "" && existing.RequestHash != requestHash {
+			return ErrIdempotencyConflict
+		}
+		if existing.Actor != "" && actor != "" && existing.Actor != actor {
+			return ErrIdempotencyConflict
+		}
 	}
-	c.ProcessedRequests[requestID] = IdempotencyRecord{Command: command, Revision: c.Revision, At: now.UTC()}
+	c.ProcessedRequests[requestID] = IdempotencyRecord{
+		Command: command, Revision: c.Revision, At: now.UTC(),
+		RequestHash: requestHash, Actor: actor,
+	}
 	return nil
 }
 
-func (c *ClearanceCase) RequestResult(requestID, command string) (IdempotencyRecord, bool, error) {
+func (c *ClearanceCase) RequestResult(requestID, command, requestHash, actor string) (IdempotencyRecord, bool, error) {
 	r, ok := c.ProcessedRequests[requestID]
 	if !ok {
 		return IdempotencyRecord{}, false, nil
 	}
 	if r.Command != command {
 		return IdempotencyRecord{}, false, ErrDuplicateRequest
+	}
+	if r.RequestHash != "" && requestHash != "" && r.RequestHash != requestHash {
+		return IdempotencyRecord{}, false, ErrIdempotencyConflict
+	}
+	if r.Actor != "" && actor != "" && r.Actor != actor {
+		return IdempotencyRecord{}, false, ErrIdempotencyConflict
 	}
 	return r, true, nil
 }

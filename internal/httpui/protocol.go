@@ -73,6 +73,8 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusNotFound, "not_found", "记录不存在", nil)
 	case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrDuplicateRequest):
 		h.writeError(w, http.StatusConflict, "revision_conflict", err.Error(), nil)
+	case errors.Is(err, domain.ErrIdempotencyConflict):
+		h.writeError(w, http.StatusConflict, "idempotency_conflict", err.Error(), nil)
 	case errors.Is(err, domain.ErrForbidden):
 		h.writeError(w, http.StatusForbidden, "forbidden", err.Error(), nil)
 	case errors.Is(err, domain.ErrInvalidState), errors.Is(err, domain.ErrAlreadyReleased),

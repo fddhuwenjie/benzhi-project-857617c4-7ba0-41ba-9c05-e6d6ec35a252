@@ -6,16 +6,17 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("记录不存在")
-	ErrConflict         = errors.New("revision 冲突")
-	ErrForbidden        = errors.New("当前岗位无权执行该操作")
-	ErrInvalidState     = errors.New("当前状态不允许该操作")
-	ErrValidation       = errors.New("输入校验失败")
-	ErrAlreadyReleased  = errors.New("已放行方案不可修改")
-	ErrEvidenceRequired = errors.New("风险项缺少有效证据")
-	ErrReviewIncomplete = errors.New("风险项尚未全部通过复核")
-	ErrDigestMismatch   = errors.New("内容摘要不匹配")
-	ErrDuplicateRequest = errors.New("请求标识已用于其他命令")
+	ErrNotFound            = errors.New("记录不存在")
+	ErrConflict            = errors.New("revision 冲突")
+	ErrForbidden           = errors.New("当前岗位无权执行该操作")
+	ErrInvalidState        = errors.New("当前状态不允许该操作")
+	ErrValidation          = errors.New("输入校验失败")
+	ErrAlreadyReleased     = errors.New("已放行方案不可修改")
+	ErrEvidenceRequired    = errors.New("风险项缺少有效证据")
+	ErrReviewIncomplete    = errors.New("风险项尚未全部通过复核")
+	ErrDigestMismatch      = errors.New("内容摘要不匹配")
+	ErrDuplicateRequest    = errors.New("请求标识已用于其他命令")
+	ErrIdempotencyConflict = errors.New("请求标识已用于内容不同的请求")
 )
 
 type FieldError struct {
