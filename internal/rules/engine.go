@@ -53,7 +53,7 @@ func (e *Engine) Evaluate(ctx context.Context, c *domain.ClearanceCase) ([]domai
 	cached, ok := e.cache[cacheKey]
 	e.cacheMu.RUnlock()
 	if ok {
-		return cached, nil
+		return cloneFindings(cached), nil
 	}
 	findings := make([]domain.FindingSpec, 0)
 	for _, step := range c.Steps {
@@ -100,7 +100,18 @@ func (e *Engine) Evaluate(ctx context.Context, c *domain.ClearanceCase) ([]domai
 	e.cacheMu.Lock()
 	e.cache[cacheKey] = findings
 	e.cacheMu.Unlock()
-	return findings, nil
+	return cloneFindings(findings), nil
+}
+
+// cloneFindings 返回 findings 的深拷贝，使调用方对返回切片的任何修改都不会影响
+// 引擎内部缓存。FindingSpec 仅含值类型字段，复制元素到新底层数组即可彻底隔离。
+func cloneFindings(findings []domain.FindingSpec) []domain.FindingSpec {
+	if findings == nil {
+		return nil
+	}
+	out := make([]domain.FindingSpec, len(findings))
+	copy(out, findings)
+	return out
 }
 
 func overlappingZoneFindings(steps []domain.MotionStep) []domain.FindingSpec {
