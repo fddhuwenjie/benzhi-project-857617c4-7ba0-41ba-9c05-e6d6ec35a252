@@ -14,6 +14,7 @@ type Repository interface {
 type EvidenceBlobStore interface {
 	PutEvidence(ctx context.Context, expectedSHA256 string, content []byte) (storageKey string, size int64, err error)
 	ReadEvidence(ctx context.Context, storageKey string) ([]byte, error)
+	DeleteEvidenceIfUnreferenced(ctx context.Context, storageKey string) error
 }
 
 type FindingSpec struct {

@@ -87,6 +87,55 @@ func isHex(value string) bool {
 	return true
 }
 
+func (s *FileStore) DeleteEvidenceIfUnreferenced(ctx context.Context, storageKey string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	parts := strings.Split(storageKey, "/")
+	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 64 || parts[0] != parts[1][:2] || !isHex(parts[1]) {
+		return domain.NewValidation("storage_key", "格式不安全")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	referenced, err := s.isEvidenceReferencedLocked(storageKey)
+	if err != nil {
+		return err
+	}
+	if referenced {
+		return nil
+	}
+	path := filepath.Join(s.evidenceDir, parts[0], parts[1])
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *FileStore) isEvidenceReferencedLocked(storageKey string) (bool, error) {
+	entries, err := os.ReadDir(s.casesDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		snapshot, err := readSnapshot(filepath.Join(s.casesDir, entry.Name()))
+		if err != nil {
+			return false, err
+		}
+		for _, finding := range snapshot.Case.Findings {
+			if finding.Evidence != nil && finding.Evidence.StorageKey == storageKey {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (s *FileStore) validateEvidenceRecord(record domain.EvidenceRecord) error {
 	parts := strings.Split(record.StorageKey, "/")
 	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 64 || parts[0] != parts[1][:2] || !isHex(parts[1]) {

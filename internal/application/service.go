@@ -127,6 +127,12 @@ func (s *Service) SubmitEvidence(ctx context.Context, caseID string, actor Actor
 	if prior {
 		return toCaseView(c), nil
 	}
+	if err := domain.ValidateEvidenceMetadata(cmd.FindingID, cmd.OriginalName, cmd.Note); err != nil {
+		return CaseView{}, err
+	}
+	if err := c.ValidateEvidenceSubmission(cmd.FindingID); err != nil {
+		return CaseView{}, err
+	}
 	storageKey, size, err := s.blobs.PutEvidence(ctx, cmd.ExpectedSHA256, cmd.Content)
 	if err != nil {
 		return CaseView{}, err
@@ -139,15 +145,24 @@ func (s *Service) SubmitEvidence(ctx context.Context, caseID string, actor Actor
 	}
 	now := s.clock.Now()
 	if err := c.AddEvidence(cmd.FindingID, evidence, actor.Name, now); err != nil {
+		s.cleanupOrphanEvidence(storageKey)
 		return CaseView{}, err
 	}
 	if err := c.RecordRequest(cmd.RequestID, "submit_evidence", now); err != nil {
+		s.cleanupOrphanEvidence(storageKey)
 		return CaseView{}, err
 	}
 	if err := s.repo.Save(ctx, c, cmd.ExpectedRevision, c.DrainEvents()); err != nil {
+		s.cleanupOrphanEvidence(storageKey)
 		return CaseView{}, err
 	}
 	return toCaseView(c), nil
+}
+
+func (s *Service) cleanupOrphanEvidence(storageKey string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.blobs.DeleteEvidenceIfUnreferenced(cleanupCtx, storageKey)
 }
 
 func (s *Service) RequestReview(ctx context.Context, caseID string, actor Actor, cmd RequestReviewCommand) (CaseView, error) {

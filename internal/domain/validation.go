@@ -76,6 +76,20 @@ func ValidateRole(actual Role, allowed ...Role) error {
 	return ErrForbidden
 }
 
+func ValidateEvidenceMetadata(findingID, originalName, note string) error {
+	fields := make([]FieldError, 0)
+	if strings.TrimSpace(findingID) == "" {
+		fields = append(fields, FieldError{Field: "finding_id", Message: "不能为空"})
+	}
+	if strings.TrimSpace(originalName) == "" {
+		fields = append(fields, FieldError{Field: "original_name", Message: "不能为空"})
+	}
+	if strings.TrimSpace(note) == "" {
+		fields = append(fields, FieldError{Field: "note", Message: "整改说明不能为空"})
+	}
+	return CombineValidation(fields...)
+}
+
 func ValidStatus(status CaseStatus) bool {
 	switch status {
 	case StatusDraft, StatusPendingEval, StatusRemediation, StatusPendingReview, StatusReleased:

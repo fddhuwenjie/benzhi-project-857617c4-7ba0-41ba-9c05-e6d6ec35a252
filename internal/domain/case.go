@@ -147,6 +147,20 @@ func (c *ClearanceCase) ApplyEvaluation(findings []RiskFinding, version, actor s
 	return nil
 }
 
+func (c *ClearanceCase) ValidateEvidenceSubmission(findingID string) error {
+	if c.Status != StatusRemediation {
+		return ErrInvalidState
+	}
+	f, err := c.finding(findingID)
+	if err != nil {
+		return err
+	}
+	if f.Status == FindingAccepted {
+		return NewValidation("finding_id", "已接受风险项不能替换证据")
+	}
+	return nil
+}
+
 func (c *ClearanceCase) AddEvidence(findingID string, evidence EvidenceRecord, actor string, now time.Time) error {
 	if c.Status != StatusRemediation {
 		return ErrInvalidState
