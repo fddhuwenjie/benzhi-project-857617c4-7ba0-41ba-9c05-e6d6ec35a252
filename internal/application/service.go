@@ -110,10 +110,11 @@ func (s *Service) Evaluate(ctx context.Context, caseID string, actor Actor, cmd 
 	if err := c.RecordRequest(cmd.RequestID, "evaluate", now); err != nil {
 		return CaseView{}, err
 	}
-	if err := s.repo.Save(ctx, c, cmd.ExpectedRevision, c.DrainEvents()); err != nil {
+	stored, err := s.saveChange(ctx, c, cmd.ExpectedRevision, caseID, cmd.RequestID, "evaluate")
+	if err != nil {
 		return CaseView{}, err
 	}
-	return toCaseView(c), nil
+	return toCaseView(stored), nil
 }
 
 func (s *Service) SubmitEvidence(ctx context.Context, caseID string, actor Actor, cmd SubmitEvidenceCommand) (CaseView, error) {
@@ -144,10 +145,11 @@ func (s *Service) SubmitEvidence(ctx context.Context, caseID string, actor Actor
 	if err := c.RecordRequest(cmd.RequestID, "submit_evidence", now); err != nil {
 		return CaseView{}, err
 	}
-	if err := s.repo.Save(ctx, c, cmd.ExpectedRevision, c.DrainEvents()); err != nil {
+	stored, err := s.saveChange(ctx, c, cmd.ExpectedRevision, caseID, cmd.RequestID, "submit_evidence")
+	if err != nil {
 		return CaseView{}, err
 	}
-	return toCaseView(c), nil
+	return toCaseView(stored), nil
 }
 
 func (s *Service) RequestReview(ctx context.Context, caseID string, actor Actor, cmd RequestReviewCommand) (CaseView, error) {
@@ -189,10 +191,14 @@ func (s *Service) Sign(ctx context.Context, caseID string, actor Actor, cmd Sign
 	if err := c.RecordRequest(cmd.RequestID, "sign", now); err != nil {
 		return CertificateView{}, err
 	}
-	if err := s.repo.Save(ctx, c, cmd.ExpectedRevision, c.DrainEvents()); err != nil {
+	stored, err := s.saveChange(ctx, c, cmd.ExpectedRevision, caseID, cmd.RequestID, "sign")
+	if err != nil {
 		return CertificateView{}, err
 	}
-	return CertificateView{Certificate: cert, Valid: true}, nil
+	if stored.Certificate == nil {
+		return CertificateView{}, domain.ErrInvalidState
+	}
+	return CertificateView{Certificate: *stored.Certificate, Valid: domain.VerifyCertificate(*stored.Certificate)}, nil
 }
 
 func (s *Service) change(ctx context.Context, caseID string, actor Actor, command, requestID string, expectedRevision int64, roles []domain.Role, mutate func(*domain.ClearanceCase, time.Time) error) (CaseView, error) {
@@ -213,10 +219,35 @@ func (s *Service) change(ctx context.Context, caseID string, actor Actor, comman
 	if err := c.RecordRequest(requestID, command, now); err != nil {
 		return CaseView{}, err
 	}
-	if err := s.repo.Save(ctx, c, expectedRevision, c.DrainEvents()); err != nil {
+	stored, err := s.saveChange(ctx, c, expectedRevision, caseID, requestID, command)
+	if err != nil {
 		return CaseView{}, err
 	}
-	return toCaseView(c), nil
+	return toCaseView(stored), nil
+}
+
+// saveChange persists the mutated case and resolves concurrent idempotent
+// replays. When two identical requests race on the same unprocessed snapshot,
+// the first Save succeeds and the second observes ErrConflict because the
+// revision advanced. In that case the stored case already records the request,
+// so this returns the persisted view instead of surfacing the conflict.
+// Genuine conflicts from different request identifiers still surface as
+// ErrConflict.
+func (s *Service) saveChange(ctx context.Context, c *domain.ClearanceCase, expectedRevision int64, caseID, requestID, command string) (*domain.ClearanceCase, error) {
+	if err := s.repo.Save(ctx, c, expectedRevision, c.DrainEvents()); err != nil {
+		if !errors.Is(err, domain.ErrConflict) {
+			return nil, err
+		}
+		stored, getErr := s.repo.Get(ctx, caseID)
+		if getErr != nil {
+			return nil, err
+		}
+		if _, prior, reqErr := stored.RequestResult(requestID, command); reqErr == nil && prior {
+			return stored, nil
+		}
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Service) prepareChange(ctx context.Context, caseID, command, requestID string, expectedRevision int64) (*domain.ClearanceCase, bool, error) {
