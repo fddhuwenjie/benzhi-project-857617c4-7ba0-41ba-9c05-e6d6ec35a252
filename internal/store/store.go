@@ -210,6 +210,15 @@ func (s *FileStore) validateExisting() error {
 				return fmt.Errorf("校验快照 %s: 凭证方案摘要不一致", entry.Name())
 			}
 		}
+		for i := range snapshot.Case.Findings {
+			finding := &snapshot.Case.Findings[i]
+			if finding.Evidence == nil {
+				continue
+			}
+			if err := s.validateEvidenceRecord(*finding.Evidence); err != nil {
+				return fmt.Errorf("校验快照 %s 风险项 %s 证据: %w", entry.Name(), finding.ID, err)
+			}
+		}
 	}
 	return nil
 }

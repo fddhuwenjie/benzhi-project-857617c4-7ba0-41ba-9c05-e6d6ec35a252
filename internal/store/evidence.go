@@ -92,14 +92,15 @@ func (s *FileStore) validateEvidenceRecord(record domain.EvidenceRecord) error {
 	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 64 || parts[0] != parts[1][:2] || !isHex(parts[1]) {
 		return domain.NewValidation("storage_key", "格式不安全")
 	}
-	data, err := os.ReadFile(filepath.Join(s.evidenceDir, parts[0], parts[1]))
+	path := filepath.Join(s.evidenceDir, parts[0], parts[1])
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("证据附件 %s 不可读: %w: %w", record.StorageKey, domain.ErrDigestMismatch, err)
 	}
 	digest := sha256.Sum256(data)
 	actual := hex.EncodeToString(digest[:])
 	if actual != record.SHA256 || actual != parts[1] || int64(len(data)) != record.SizeBytes {
-		return domain.ErrDigestMismatch
+		return fmt.Errorf("证据附件 %s 完整性校验失败: %w", record.StorageKey, domain.ErrDigestMismatch)
 	}
 	return nil
 }
