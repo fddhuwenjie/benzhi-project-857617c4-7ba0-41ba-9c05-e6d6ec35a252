@@ -59,17 +59,30 @@ func (s *FileStore) Create(ctx context.Context, c *domain.ClearanceCase, events 
 		return domain.NewValidation("case", "缺少放行单")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	path, err := s.casePath(c.ID)
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	if _, err := os.Stat(path); err == nil {
+		s.mu.Unlock()
 		return domain.ErrConflict
 	} else if !errors.Is(err, os.ErrNotExist) {
+		s.mu.Unlock()
 		return err
 	}
-	return writeSnapshot(path, c, events)
+	cert, err := domain.CloneCertificate(c.Certificate)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := writeSnapshot(path, c, events); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	s.refreshCertificateIndexEntry(nil, cert)
+	return nil
 }
 
 func (s *FileStore) Get(ctx context.Context, id string) (*domain.ClearanceCase, error) {
@@ -100,26 +113,46 @@ func (s *FileStore) Save(ctx context.Context, c *domain.ClearanceCase, expectedR
 		return domain.NewValidation("case", "缺少放行单")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	path, err := s.casePath(c.ID)
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	current, err := readSnapshot(path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.mu.Unlock()
 		return domain.ErrNotFound
 	}
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	if current.Case.Revision != expectedRevision {
+		s.mu.Unlock()
 		return domain.ErrConflict
 	}
 	if c.Revision <= expectedRevision {
+		s.mu.Unlock()
 		return fmt.Errorf("%w: 新 revision 必须递增", domain.ErrConflict)
 	}
+	prevCert, err := domain.CloneCertificate(current.Case.Certificate)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	nextCert, err := domain.CloneCertificate(c.Certificate)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	allEvents := append(append([]domain.AuditEvent(nil), current.Audit...), events...)
-	return writeSnapshot(path, c, allEvents)
+	if err := writeSnapshot(path, c, allEvents); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	s.refreshCertificateIndexEntry(prevCert, nextCert)
+	return nil
 }
 
 func (s *FileStore) List(ctx context.Context) ([]*domain.ClearanceCase, error) {
@@ -227,6 +260,39 @@ func cloneVerifiedCertificate(cert *domain.ReleaseCertificate) (*domain.ReleaseC
 		return nil, fmt.Errorf("%w: 凭证校验码无效", domain.ErrDigestMismatch)
 	}
 	return domain.CloneCertificate(cert)
+}
+
+// refreshCertificateIndexEntry keeps the lazy certificate index consistent after
+// a case snapshot is persisted. It is safe to call concurrently with
+// FindCertificate because it only acquires certificateMu (never s.mu), avoiding
+// the certificateMu→mu lock order used by FindCertificate's cache rebuild.
+//
+// When the index has not been primed yet nothing is updated: FindCertificate
+// will build it from disk on first use and therefore observe the latest state.
+// When the index is ready we drop any stale entry for the previous certificate
+// and insert/replace the entry for the new certificate so that newly persisted
+// certificates are queryable without a process restart.
+func (s *FileStore) refreshCertificateIndexEntry(prev, next *domain.ReleaseCertificate) {
+	s.certificateMu.Lock()
+	defer s.certificateMu.Unlock()
+	if !s.certificateIndexReady {
+		return
+	}
+	if prev != nil {
+		prevKey := certificateLookup{clearanceNumber: prev.ClearanceNumber, verificationCode: prev.VerificationCode}
+		if existing, ok := s.certificateIndex[prevKey]; ok && existing != nil &&
+			existing.ID == prev.ID && existing.VerificationCode == prev.VerificationCode {
+			delete(s.certificateIndex, prevKey)
+		}
+	}
+	if next != nil && domain.VerifyCertificate(*next) {
+		nextKey := certificateLookup{clearanceNumber: next.ClearanceNumber, verificationCode: next.VerificationCode}
+		clone, err := domain.CloneCertificate(next)
+		if err != nil {
+			return
+		}
+		s.certificateIndex[nextKey] = clone
+	}
 }
 
 func (s *FileStore) validateExisting() error {
