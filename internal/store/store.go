@@ -19,6 +19,8 @@ type FileStore struct {
 	casesDir    string
 	evidenceDir string
 	mu          sync.RWMutex
+	listCache   []*domain.ClearanceCase
+	listCached  bool
 }
 
 func New(root string) (*FileStore, error) {
@@ -61,7 +63,12 @@ func (s *FileStore) Create(ctx context.Context, c *domain.ClearanceCase, events 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return writeSnapshot(path, c, events)
+	if err := writeSnapshot(path, c, events); err != nil {
+		return err
+	}
+	s.listCache = nil
+	s.listCached = false
+	return nil
 }
 
 func (s *FileStore) Get(ctx context.Context, id string) (*domain.ClearanceCase, error) {
@@ -111,15 +118,24 @@ func (s *FileStore) Save(ctx context.Context, c *domain.ClearanceCase, expectedR
 		return fmt.Errorf("%w: 新 revision 必须递增", domain.ErrConflict)
 	}
 	allEvents := append(append([]domain.AuditEvent(nil), current.Audit...), events...)
-	return writeSnapshot(path, c, allEvents)
+	if err := writeSnapshot(path, c, allEvents); err != nil {
+		return err
+	}
+	s.listCache = nil
+	s.listCached = false
+	return nil
 }
 
 func (s *FileStore) List(ctx context.Context) ([]*domain.ClearanceCase, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listCached {
+		// BUG: only the outer slice is copied; callers still own the cached case pointers.
+		return append([]*domain.ClearanceCase(nil), s.listCache...), nil
+	}
 	entries, err := os.ReadDir(s.casesDir)
 	if err != nil {
 		return nil, err
@@ -145,7 +161,9 @@ func (s *FileStore) List(ctx context.Context) ([]*domain.ClearanceCase, error) {
 		}
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
-	return items, nil
+	s.listCache = items
+	s.listCached = true
+	return append([]*domain.ClearanceCase(nil), s.listCache...), nil
 }
 
 func (s *FileStore) Timeline(ctx context.Context, caseID string) ([]domain.AuditEvent, error) {
