@@ -15,10 +15,18 @@ import (
 )
 
 type FileStore struct {
-	root        string
-	casesDir    string
-	evidenceDir string
-	mu          sync.RWMutex
+	root                  string
+	casesDir              string
+	evidenceDir           string
+	mu                    sync.RWMutex
+	certificateMu         sync.RWMutex
+	certificateIndex      map[certificateLookup]*domain.ReleaseCertificate
+	certificateIndexReady bool
+}
+
+type certificateLookup struct {
+	clearanceNumber  string
+	verificationCode string
 }
 
 func New(root string) (*FileStore, error) {
@@ -169,20 +177,56 @@ func (s *FileStore) Timeline(ctx context.Context, caseID string) ([]domain.Audit
 }
 
 func (s *FileStore) FindCertificate(ctx context.Context, clearanceNumber, verificationCode string) (*domain.ReleaseCertificate, error) {
-	items, err := s.List(ctx)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		cert := item.Certificate
-		if cert != nil && cert.ClearanceNumber == clearanceNumber && cert.VerificationCode == verificationCode {
-			if !domain.VerifyCertificate(*cert) {
-				return nil, fmt.Errorf("%w: 凭证校验码无效", domain.ErrDigestMismatch)
-			}
-			return domain.CloneCertificate(cert)
-		}
+	key := certificateLookup{clearanceNumber: clearanceNumber, verificationCode: verificationCode}
+	s.certificateMu.RLock()
+	if err := ctx.Err(); err != nil {
+		s.certificateMu.RUnlock()
+		return nil, err
 	}
-	return nil, domain.ErrNotFound
+	if s.certificateIndexReady {
+		cert := s.certificateIndex[key]
+		s.certificateMu.RUnlock()
+		return cloneVerifiedCertificate(cert)
+	}
+	s.certificateMu.RUnlock()
+
+	s.certificateMu.Lock()
+	defer s.certificateMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !s.certificateIndexReady {
+		items, err := s.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		index := make(map[certificateLookup]*domain.ReleaseCertificate)
+		for _, item := range items {
+			if item.Certificate != nil {
+				certKey := certificateLookup{
+					clearanceNumber:  item.Certificate.ClearanceNumber,
+					verificationCode: item.Certificate.VerificationCode,
+				}
+				index[certKey] = item.Certificate
+			}
+		}
+		s.certificateIndex = index
+		s.certificateIndexReady = true
+	}
+	return cloneVerifiedCertificate(s.certificateIndex[key])
+}
+
+func cloneVerifiedCertificate(cert *domain.ReleaseCertificate) (*domain.ReleaseCertificate, error) {
+	if cert == nil {
+		return nil, domain.ErrNotFound
+	}
+	if !domain.VerifyCertificate(*cert) {
+		return nil, fmt.Errorf("%w: 凭证校验码无效", domain.ErrDigestMismatch)
+	}
+	return domain.CloneCertificate(cert)
 }
 
 func (s *FileStore) validateExisting() error {
