@@ -15,10 +15,11 @@ import (
 )
 
 type FileStore struct {
-	root        string
-	casesDir    string
-	evidenceDir string
-	mu          sync.RWMutex
+	root                 string
+	casesDir             string
+	evidenceDir          string
+	mu                   sync.RWMutex
+	verifiedEvidenceKeys map[string]struct{}
 }
 
 func New(root string) (*FileStore, error) {
@@ -29,7 +30,12 @@ func New(root string) (*FileStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &FileStore{root: abs, casesDir: filepath.Join(abs, "cases"), evidenceDir: filepath.Join(abs, "evidence")}
+	s := &FileStore{
+		root:                 abs,
+		casesDir:             filepath.Join(abs, "cases"),
+		evidenceDir:          filepath.Join(abs, "evidence"),
+		verifiedEvidenceKeys: make(map[string]struct{}),
+	}
 	for _, dir := range []string{s.root, s.casesDir, s.evidenceDir} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("创建持久化目录: %w", err)

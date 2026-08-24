@@ -62,8 +62,9 @@ func (s *FileStore) ReadEvidence(ctx context.Context, storageKey string) ([]byte
 		return nil, domain.NewValidation("storage_key", "格式不安全")
 	}
 	path := filepath.Join(s.evidenceDir, parts[0], parts[1])
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, previouslyVerified := s.verifiedEvidenceKeys[storageKey]
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, domain.ErrNotFound
@@ -71,9 +72,12 @@ func (s *FileStore) ReadEvidence(ctx context.Context, storageKey string) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256(data)
-	if hex.EncodeToString(digest[:]) != parts[1] {
-		return nil, domain.ErrDigestMismatch
+	if !previouslyVerified {
+		digest := sha256.Sum256(data)
+		if hex.EncodeToString(digest[:]) != parts[1] {
+			return nil, domain.ErrDigestMismatch
+		}
+		s.verifiedEvidenceKeys[storageKey] = struct{}{}
 	}
 	return data, nil
 }
