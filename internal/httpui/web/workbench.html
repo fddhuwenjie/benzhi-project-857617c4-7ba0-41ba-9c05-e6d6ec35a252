@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>舞台机械安全放行工作台</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <span class="brand-mark" aria-hidden="true">SC</span>
+      <div>
+        <h1>舞台机械安全放行</h1>
+        <p id="service-state">正在连接服务</p>
+      </div>
+    </div>
+    <div class="actor-controls" aria-label="当前操作身份">
+      <label>
+        <span>操作人</span>
+        <input id="actor-name" value="林岚" autocomplete="name">
+      </label>
+      <label>
+        <span>岗位</span>
+        <select id="actor-role">
+          <option value="technical_director">剧场技术总监</option>
+          <option value="mechanical_lead">舞台机械主管</option>
+          <option value="safety_reviewer">演出安全复核员</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="case-sidebar">
+      <div class="sidebar-heading">
+        <div>
+          <h2>放行单</h2>
+          <span id="case-count">0 项</span>
+        </div>
+        <button id="new-case" class="primary compact" type="button">新建放行单</button>
+      </div>
+      <div class="case-filter">
+        <label for="case-search" class="sr-only">筛选放行单</label>
+        <input id="case-search" type="search" placeholder="编号、演出或区域">
+      </div>
+      <nav id="case-list" class="case-list" aria-label="放行单列表"></nav>
+    </aside>
+
+    <section class="case-workspace">
+      <div id="empty-state" class="empty-state">
+        <strong>尚未选择放行单</strong>
+        <span>从左侧选择一项，或建立新的演出放行单。</span>
+      </div>
+
+      <div id="case-content" hidden>
+        <header class="case-header">
+          <div class="case-title">
+            <div class="case-kicker">
+              <span id="case-number"></span>
+              <span id="case-status" class="status-badge"></span>
+              <span id="case-revision" class="revision"></span>
+            </div>
+            <h2 id="performance-name"></h2>
+            <p id="case-meta"></p>
+          </div>
+          <div class="header-actions">
+            <button id="refresh-case" class="secondary" type="button">刷新</button>
+            <button id="evaluate-case" class="primary" type="button">提交规则评估</button>
+            <button id="request-review" class="primary" type="button">申请安全复核</button>
+            <button id="sign-case" class="danger" type="button">签署放行</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="放行单视图">
+          <button class="tab active" data-tab="plan" type="button">动作方案</button>
+          <button class="tab" data-tab="risks" type="button">风险矩阵 <span id="risk-count" class="count">0</span></button>
+          <button class="tab" data-tab="review" type="button">复核队列</button>
+          <button class="tab" data-tab="timeline" type="button">状态时间线</button>
+          <button class="tab" data-tab="certificate" type="button">放行凭证</button>
+        </nav>
+
+        <section id="tab-plan" class="tab-panel active" aria-labelledby="动作方案">
+          <div class="panel-toolbar">
+            <div>
+              <h3>机械动作时间线</h3>
+              <p id="plan-summary">0 个动作</p>
+            </div>
+            <div class="toolbar-actions">
+              <button id="add-step" class="secondary" type="button">添加动作</button>
+              <button id="save-plan" class="primary" type="button">保存方案</button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table plan-table">
+              <thead>
+                <tr>
+                  <th>序号</th><th>设备</th><th>区域</th><th>开始 ms</th><th>时长 ms</th><th>载荷 kg</th><th>净空</th><th>互锁条件</th><th><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody id="plan-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tab-risks" class="tab-panel" aria-labelledby="风险矩阵">
+          <div class="risk-summary" id="risk-summary"></div>
+          <div id="risk-list" class="risk-list"></div>
+        </section>
+
+        <section id="tab-review" class="tab-panel" aria-labelledby="复核队列">
+          <div class="panel-toolbar">
+            <div><h3>证据复核</h3><p id="review-progress">暂无待复核项</p></div>
+          </div>
+          <div id="review-list" class="review-list"></div>
+        </section>
+
+        <section id="tab-timeline" class="tab-panel" aria-labelledby="状态时间线">
+          <div class="panel-toolbar"><div><h3>状态与审计记录</h3><p>按 revision 排列</p></div></div>
+          <ol id="timeline-list" class="timeline-list"></ol>
+        </section>
+
+        <section id="tab-certificate" class="tab-panel" aria-labelledby="放行凭证">
+          <div id="certificate-empty" class="section-empty">当前放行单尚未签署。</div>
+          <article id="certificate-view" class="certificate" hidden>
+            <header>
+              <div><span>STAGE CLEARANCE</span><h3>舞台机械安全放行凭证</h3></div>
+              <strong id="certificate-valid">校验有效</strong>
+            </header>
+            <dl>
+              <div><dt>放行编号</dt><dd id="cert-number"></dd></div>
+              <div><dt>演出</dt><dd id="cert-performance"></dd></div>
+              <div><dt>区域</dt><dd id="cert-zone"></dd></div>
+              <div><dt>规则版本</dt><dd id="cert-rule"></dd></div>
+              <div><dt>签署人</dt><dd id="cert-signer"></dd></div>
+              <div><dt>签署时间</dt><dd id="cert-time"></dd></div>
+              <div class="wide"><dt>方案摘要</dt><dd id="cert-digest" class="mono"></dd></div>
+              <div class="wide"><dt>校验码</dt><dd id="cert-code" class="verification-code"></dd></div>
+            </dl>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="case-dialog">
+    <form id="case-form">
+      <header><h2>建立演出放行单</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">x</button></header>
+      <div class="form-grid">
+        <label class="wide"><span>演出名称</span><input name="performance_name" required maxlength="120"></label>
+        <label><span>舞台区域</span><select name="venue_zone" required><option value="main">主舞台</option><option value="fly">吊杆区</option><option value="pit">乐池升降区</option><option value="wing-left">左侧台</option><option value="wing-right">右侧台</option></select></label>
+        <label><span>开始时间</span><input name="starts_at" type="datetime-local" required></label>
+        <label><span>结束时间</span><input name="ends_at" type="datetime-local" required></label>
+      </div>
+      <footer><button class="secondary close-dialog" type="button">取消</button><button class="primary" type="submit">建立草稿</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="evidence-dialog">
+    <form id="evidence-form">
+      <header><div><span class="dialog-kicker" id="evidence-finding-code"></span><h2>提交整改证据</h2></div><button class="icon-button close-evidence" type="button" aria-label="关闭">x</button></header>
+      <input type="hidden" name="finding_id">
+      <label><span>责任岗位</span><input value="舞台机械主管" disabled></label>
+      <label><span>整改说明</span><textarea name="note" rows="4" maxlength="600" required></textarea></label>
+      <label><span>本地证据附件</span><input name="file" type="file" required></label>
+      <p id="evidence-file-meta" class="file-meta"></p>
+      <footer><button class="secondary close-evidence" type="button">取消</button><button class="primary" type="submit">校验并提交</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="verify-dialog">
+    <form id="verify-form">
+      <header><h2>核验放行凭证</h2><button class="icon-button close-verify" type="button" aria-label="关闭">x</button></header>
+      <label><span>放行编号</span><input name="clearance_number" required></label>
+      <label><span>校验码</span><input name="verification_code" required></label>
+      <footer><button class="secondary close-verify" type="button">取消</button><button class="primary" type="submit">核验</button></footer>
+    </form>
+  </dialog>
+
+  <button id="open-verify" class="verify-shortcut" type="button">凭证核验</button>
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
+
