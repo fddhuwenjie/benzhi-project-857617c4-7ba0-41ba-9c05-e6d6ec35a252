@@ -15,10 +15,11 @@ import (
 )
 
 type FileStore struct {
-	root        string
-	casesDir    string
-	evidenceDir string
-	mu          sync.RWMutex
+	root          string
+	casesDir      string
+	evidenceDir   string
+	mu            sync.RWMutex
+	timelineCache map[string][]domain.AuditEvent
 }
 
 func New(root string) (*FileStore, error) {
@@ -29,7 +30,10 @@ func New(root string) (*FileStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &FileStore{root: abs, casesDir: filepath.Join(abs, "cases"), evidenceDir: filepath.Join(abs, "evidence")}
+	s := &FileStore{
+		root: abs, casesDir: filepath.Join(abs, "cases"), evidenceDir: filepath.Join(abs, "evidence"),
+		timelineCache: make(map[string][]domain.AuditEvent),
+	}
 	for _, dir := range []string{s.root, s.casesDir, s.evidenceDir} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("创建持久化目录: %w", err)
@@ -61,7 +65,11 @@ func (s *FileStore) Create(ctx context.Context, c *domain.ClearanceCase, events 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return writeSnapshot(path, c, events)
+	if err := writeSnapshot(path, c, events); err != nil {
+		return err
+	}
+	delete(s.timelineCache, c.ID)
+	return nil
 }
 
 func (s *FileStore) Get(ctx context.Context, id string) (*domain.ClearanceCase, error) {
@@ -111,7 +119,11 @@ func (s *FileStore) Save(ctx context.Context, c *domain.ClearanceCase, expectedR
 		return fmt.Errorf("%w: 新 revision 必须递增", domain.ErrConflict)
 	}
 	allEvents := append(append([]domain.AuditEvent(nil), current.Audit...), events...)
-	return writeSnapshot(path, c, allEvents)
+	if err := writeSnapshot(path, c, allEvents); err != nil {
+		return err
+	}
+	delete(s.timelineCache, c.ID)
+	return nil
 }
 
 func (s *FileStore) List(ctx context.Context) ([]*domain.ClearanceCase, error) {
@@ -152,8 +164,11 @@ func (s *FileStore) Timeline(ctx context.Context, caseID string) ([]domain.Audit
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.timelineCache[caseID]; ok {
+		return append([]domain.AuditEvent(nil), cached...), nil
+	}
 	path, err := s.casePath(caseID)
 	if err != nil {
 		return nil, err
@@ -165,7 +180,8 @@ func (s *FileStore) Timeline(ctx context.Context, caseID string) ([]domain.Audit
 	if err != nil {
 		return nil, err
 	}
-	return append([]domain.AuditEvent(nil), snapshot.Audit...), nil
+	s.timelineCache[caseID] = append([]domain.AuditEvent(nil), snapshot.Audit...)
+	return append([]domain.AuditEvent(nil), s.timelineCache[caseID]...), nil
 }
 
 func (s *FileStore) FindCertificate(ctx context.Context, clearanceNumber, verificationCode string) (*domain.ReleaseCertificate, error) {
