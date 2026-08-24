@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"stage-clearance/internal/domain"
 )
@@ -13,6 +14,14 @@ const RuleVersion = "SC-RULES-2026.1"
 
 type Engine struct {
 	capabilities map[string]DeviceCapability
+	mu           sync.Mutex
+	inflight     map[string]*evaluationCall
+}
+
+type evaluationCall struct {
+	done     chan struct{}
+	findings []domain.FindingSpec
+	err      error
 }
 
 func NewEngine(capabilities map[string]DeviceCapability) *Engine {
@@ -20,7 +29,7 @@ func NewEngine(capabilities map[string]DeviceCapability) *Engine {
 	for code, capability := range capabilities {
 		copyCapabilities[code] = capability
 	}
-	return &Engine{capabilities: copyCapabilities}
+	return &Engine{capabilities: copyCapabilities, inflight: make(map[string]*evaluationCall)}
 }
 
 func NewDefaultEngine() *Engine {
@@ -39,6 +48,49 @@ func (e *Engine) Evaluate(ctx context.Context, c *domain.ClearanceCase) ([]domai
 	if err := domain.ValidateSteps(c.ID, c.StartsAt, c.EndsAt, c.Steps); err != nil {
 		return nil, err
 	}
+	digest, err := domain.PlanDigest(c)
+	if err != nil {
+		return nil, err
+	}
+	call, owner := e.acquireEvaluation(digest)
+	if !owner {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-call.done:
+			return cloneFindingSpecs(call.findings), call.err
+		}
+	}
+	findings, err := e.evaluateRules(ctx, c)
+	e.completeEvaluation(digest, call, findings, err)
+	return cloneFindingSpecs(findings), err
+}
+
+func (e *Engine) acquireEvaluation(digest string) (*evaluationCall, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if call, ok := e.inflight[digest]; ok {
+		return call, false
+	}
+	call := &evaluationCall{done: make(chan struct{})}
+	e.inflight[digest] = call
+	return call, true
+}
+
+func (e *Engine) completeEvaluation(digest string, call *evaluationCall, findings []domain.FindingSpec, err error) {
+	e.mu.Lock()
+	call.findings = cloneFindingSpecs(findings)
+	call.err = err
+	delete(e.inflight, digest)
+	close(call.done)
+	e.mu.Unlock()
+}
+
+func cloneFindingSpecs(findings []domain.FindingSpec) []domain.FindingSpec {
+	return append([]domain.FindingSpec(nil), findings...)
+}
+
+func (e *Engine) evaluateRules(ctx context.Context, c *domain.ClearanceCase) ([]domain.FindingSpec, error) {
 	findings := make([]domain.FindingSpec, 0)
 	for _, step := range c.Steps {
 		if err := ctx.Err(); err != nil {
