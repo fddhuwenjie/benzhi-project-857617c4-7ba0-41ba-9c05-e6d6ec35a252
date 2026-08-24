@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"stage-clearance/internal/domain"
 )
@@ -13,6 +14,8 @@ const RuleVersion = "SC-RULES-2026.1"
 
 type Engine struct {
 	capabilities map[string]DeviceCapability
+	cacheMu      sync.RWMutex
+	cache        map[string][]domain.FindingSpec
 }
 
 func NewEngine(capabilities map[string]DeviceCapability) *Engine {
@@ -20,7 +23,10 @@ func NewEngine(capabilities map[string]DeviceCapability) *Engine {
 	for code, capability := range capabilities {
 		copyCapabilities[code] = capability
 	}
-	return &Engine{capabilities: copyCapabilities}
+	return &Engine{
+		capabilities: copyCapabilities,
+		cache:        make(map[string][]domain.FindingSpec),
+	}
 }
 
 func NewDefaultEngine() *Engine {
@@ -38,6 +44,16 @@ func (e *Engine) Evaluate(ctx context.Context, c *domain.ClearanceCase) ([]domai
 	}
 	if err := domain.ValidateSteps(c.ID, c.StartsAt, c.EndsAt, c.Steps); err != nil {
 		return nil, err
+	}
+	cacheKey, err := domain.PlanDigest(c)
+	if err != nil {
+		return nil, err
+	}
+	e.cacheMu.RLock()
+	cached, ok := e.cache[cacheKey]
+	e.cacheMu.RUnlock()
+	if ok {
+		return cached, nil
 	}
 	findings := make([]domain.FindingSpec, 0)
 	for _, step := range c.Steps {
@@ -81,6 +97,9 @@ func (e *Engine) Evaluate(ctx context.Context, c *domain.ClearanceCase) ([]domai
 	}
 	findings = append(findings, overlappingZoneFindings(c.Steps)...)
 	sortFindings(findings, c.Steps)
+	e.cacheMu.Lock()
+	e.cache[cacheKey] = findings
+	e.cacheMu.Unlock()
 	return findings, nil
 }
 
